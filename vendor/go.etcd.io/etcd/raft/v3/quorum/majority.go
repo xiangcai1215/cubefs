@@ -140,6 +140,7 @@ func (c MajorityConfig) CommittedIndex(l AckedIndexer) Index {
 	// implications of an allocation here are far from drastic).
 	var stk [7]uint64
 	var srt []uint64
+	//一个 优化，如果节点少于7就从栈分配空间
 	if len(stk) >= n {
 		srt = stk[:n]
 	} else {
@@ -167,6 +168,7 @@ func (c MajorityConfig) CommittedIndex(l AckedIndexer) Index {
 	// The smallest index into the array for which the value is acked by a
 	// quorum. In other words, from the end of the slice, move n/2+1 to the
 	// left (accounting for zero-indexing).
+	//  str按照处理速度升序的排列，之后节点节点正好满足quorum
 	pos := n - (n/2 + 1)
 	return Index(srt[pos])
 }

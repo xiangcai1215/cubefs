@@ -1642,6 +1642,8 @@ func (r *raft) applyConfChange(cc pb.ConfChangeV2) pb.ConfState {
 // requirements.
 //
 // The inputs usually result from restoring a ConfState or applying a ConfChange.
+// 该方法会将新的Config与ProgressMap应用到ProgressTracker。应用后，获取激活的新状态，并检查该节点是否在新的ProgressMap。
+// 如果节点不造ProgressMap中，说明节点已被移除集群。根据不同的新状态
 func (r *raft) switchToConfig(cfg tracker.Config, prs tracker.ProgressMap) pb.ConfState {
 	r.prs.Config = cfg
 	r.prs.Progress = prs
@@ -1653,7 +1655,8 @@ func (r *raft) switchToConfig(cfg tracker.Config, prs tracker.ProgressMap) pb.Co
 	// Update whether the node itself is a learner, resetting to false when the
 	// node is removed.
 	r.isLearner = ok && pr.IsLearner
-
+	// 如果该节点原来为leader，但在新配置中成为了learner或被移除了集群，那么直接返回，
+	// 该节点会在下个term退位且无法再发起投票请求。此时状态机可以停止Node。
 	if (!ok || r.isLearner) && r.state == StateLeader {
 		// This node is leader and was removed or demoted. We prevent demotions
 		// at the time writing but hypothetically we handle them the same way as
@@ -1669,10 +1672,12 @@ func (r *raft) switchToConfig(cfg tracker.Config, prs tracker.ProgressMap) pb.Co
 
 	// The remaining steps only make sense if this node is the leader and there
 	// are other nodes.
+	// 如果节点原来不是leader节点，或新配置中不包含任何voter，那么该节点同样不需要进行任何操作，直接返回。
 	if r.state != StateLeader || len(cs.Voters) == 0 {
 		return cs
 	}
 
+	// 该节点原来为leader且继续运行。需要执行一些操作。那么按需广播日志复制请求与commit index。
 	if r.maybeCommit() {
 		// If the configuration change means that more entries are committed now,
 		// broadcast/append to everyone in the updated config.
@@ -1685,6 +1690,7 @@ func (r *raft) switchToConfig(cfg tracker.Config, prs tracker.ProgressMap) pb.Co
 			r.maybeSendAppend(id, false /* sendIfEmpty */)
 		})
 	}
+	//该leader检查此时是否在进行leader transfer，如果正在进行leader transfer但目标节点已被从配置中移除，那么终止leader transfer。
 	// If the the leadTransferee was removed or demoted, abort the leadership transfer.
 	if _, tOK := r.prs.Config.Voters.IDs()[r.leadTransferee]; !tOK && r.leadTransferee != 0 {
 		r.abortLeaderTransfer()
