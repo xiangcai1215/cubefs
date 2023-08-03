@@ -63,3 +63,40 @@ mknod [OPTION]... NAME TYPE [MAJOR MINOR]
   sudo mknod /tmp/mypipe p
   ```
 
+## 文件的扩展属性
+
+在 Linux 中，文件的扩展属性（Extended Attributes，简称 xattr）是一种用于存储与文件相关的额外信息的机制。扩展属性可以包含任何类型的数据，可以用于存储文件的元数据、访问控制信息、加密密钥等信息。以下是一些常见的文件扩展属性：
+
+- `user` 属性：用于存储用户自定义的属性。可以使用 `setfattr` 命令设置 `user` 属性。例如，将名为 `file.txt` 的文件的 `user` 属性设置为 `myattr`，属性值为 `myvalue` 的命令如下：
+
+  Copy
+
+  ```
+  setfattr -n user.myattr -v myvalue file.txt
+  ```
+
+- `security` 属性：用于存储文件安全上下文信息。例如，在 SELinux 中，可以使用 `security` 属性存储文件的安全上下文信息。可以使用 `setfattr` 命令设置 `security` 属性。
+
+- `trusted` 属性：用于存储受信任的文件元数据信息。例如，可以使用 `trusted` 属性存储文件的加密密钥。可以使用 `setfattr` 命令设置 `trusted` 属性。
+
+- `system` 属性：用于存储文件系统相关的信息。例如，在 Btrfs 文件系统中，可以使用 `system` 属性存储文件的压缩和校验信息。可以使用 `setfattr` 命令设置 `system` 属性。
+
+需要注意的是，不是所有的文件系统都支持扩展属性。在使用扩展属性时，需要确保文件系统支持扩展属性，并且需要使用支持扩展属性的命令来进行操作，如 `setfattr`、`getfattr`、`chattr` 等。
+
+# 文件IO
+
+## 函数sync、fsync、fdatasync
+
+Linux系统在内核中内核缓存或者页缓存，大多数磁盘的IO通过缓冲区进行，用户写数据会先复制到缓存区中，然后排入队列，然后再等级Io调度写入磁盘。这个部分称为延迟写入。当操作系统需要重用缓存区时候，就会把所有延迟写数据块写入磁盘。
+
+- `sync` ：将所有修改过的块缓存区排入写队列，返回就返回，实际不会等待写磁盘操作。这里通常是由于pdflush的守护进程每隔30s做一次flush操作
+- `fsync`：将某个文件的数据从缓存持久化到磁盘，这里函数只针对特定句柄fd起作用，并且等待写磁盘操作结束才返回，一般用于数据库这样程序
+- `fdatasync`:指的是将某个文件的数据从缓存持久化到磁盘
+
+## page cache和buffer cache
+
+一种事务两种表现，page cache缓存文件缓存数据，buffer cache缓存是块设备的数据。flush操作的是page cache。page cache大小一般是4K,buffer cahce大小一般是512字节。
+
+![img](https://s3.51cto.com/oss/202108/31/1e5686130ed2ffd482b472b070dfc871.png)
+
+![(https://pic4.zhimg.com/80/v2-81564e470653c78d61b085ccaf266257_720w.webp)
