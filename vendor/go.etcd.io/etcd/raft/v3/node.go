@@ -122,6 +122,7 @@ func (rd Ready) appliedCursor() uint64 {
 	return 0
 }
 
+// 提供了Raft 节点的接口
 // Node represents a node in a raft cluster.
 type Node interface {
 	// Tick increments the internal logical clock for the Node by a single tick. Election
@@ -252,16 +253,16 @@ type msgWithResult struct {
 
 // node is the canonical implementation of the Node interface
 type node struct {
-	propc      chan msgWithResult
-	recvc      chan pb.Message
-	confc      chan pb.ConfChangeV2
-	confstatec chan pb.ConfState
-	readyc     chan Ready
-	advancec   chan struct{}
-	tickc      chan struct{}
+	propc      chan msgWithResult	// 客户端写请求的提案
+	recvc      chan pb.Message		// 接受其他节点的请求
+	confc      chan pb.ConfChangeV2 //配置变更。支持联合共识算法
+	confstatec chan pb.ConfState	//配置变更
+	readyc     chan Ready			//raft算法层通知应用层有新的消息
+	advancec   chan struct{}		//应用层告知算法层消息处理完成，和readyC一一对应
+	tickc      chan struct{}		//定时任务
 	done       chan struct{}
 	stop       chan struct{}
-	status     chan chan Status
+	status     chan chan Status		// 节点状态，包括配置/配置/hardsatate/committed，应用层调用status接口时候会返回
 
 	rn *RawNode
 }
@@ -308,7 +309,7 @@ func (n *node) run() {
 	lead := None
 
 	for {
-		if advancec != nil {
+		if advancec != nil { // 如果advancec不微空，证明应用层还在处理，不接受新的readc
 			readyc = nil
 		} else if n.rn.HasReady() {
 			// Populate a Ready. Note that this Ready is not guaranteed to
@@ -319,10 +320,12 @@ func (n *node) run() {
 			// handled first, but it's generally good to emit larger Readys plus
 			// it simplifies testing (by emitting less frequently and more
 			// predictably).
+			// rd是从算法层获取的已经可以等待让应用层处理的消息
 			rd = n.rn.readyWithoutAccept()
-			readyc = n.readyc
+			readyc = n.readyc// 这里特别注意的是，此时两个chan是共用的，
 		}
 
+		// 如果有leader，会生成propc用户发送客户端的提案
 		if lead != r.lead {
 			if r.hasLeader() {
 				if lead == None {
@@ -352,6 +355,7 @@ func (n *node) run() {
 			}
 		case m := <-n.recvc:
 			// filter out response message from unknown From.
+			// 如果接受到其他节点的消息，进一步到算法层面处理，当然这里如果是消息是响应类型不需要处理。
 			if pr := r.prs.Progress[m.From]; pr != nil || !IsResponseMsg(m.Type) {
 				r.Step(m)
 			}
@@ -388,12 +392,15 @@ func (n *node) run() {
 			}
 		case <-n.tickc:
 			n.rn.Tick()
+			// 这里readyc接受到ready消息，而在上层server.go/raftStart()函数厘米，会从这个chan读取数据，然后上层应用层会处理消息。
 		case readyc <- rd:
+			// 证明算法层有消息，通知advancec产生消息。调用阿
 			n.rn.acceptReady(rd)
 			advancec = n.advancec
 		case <-advancec:
-			n.rn.Advance(rd)
-			rd = Ready{}
+			// 但应用层执行一批数据后，会调用Advance()函数往这个chan投递消息，
+			n.rn.Advance(rd) //通知raftnode这个rd已经完成，raftnode会把生成新的rd内容，
+			rd = Ready{}//消息处理完成后，会把rd设置为空，等待下一轮算法层准备好消息
 			advancec = nil
 		case c := <-n.status:
 			c <- getStatus(r)
